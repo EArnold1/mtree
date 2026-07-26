@@ -40,11 +40,17 @@ impl DirectorySnapshot {
     }
 
     pub fn save_snapshot(&self, path: impl AsRef<Path>) -> Result<(), MtreeError> {
+        let path = path.as_ref();
         let snapshot = serde_json::to_string(&self)?;
 
         fs::write(path, snapshot.as_bytes())?;
 
-        // TODO: add log message here ("saved to `file_path`")
+        log::info!(
+            "Saved snapshot to {} (files: {}, directories: {})",
+            path.display(),
+            self.metadata.file_count,
+            self.metadata.directory_count
+        );
 
         Ok(())
     }
@@ -188,113 +194,6 @@ fn unix_timestamp(time: SystemTime) -> u64 {
         .as_secs()
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::build_snapshot;
-//     use std::{
-//         fs,
-//         path::{Path, PathBuf},
-//         sync::atomic::{AtomicU64, Ordering},
-//         time::{SystemTime, UNIX_EPOCH},
-//     };
-
-//     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-
-//     #[test]
-//     fn builds_empty_snapshot_for_empty_directory() {
-//         let temp = TempDir::new();
-
-//         let snapshot = build_snapshot(temp.path()).expect("empty directory snapshot should build");
-
-//         assert!(snapshot.directories.is_empty());
-//         assert!(snapshot.files.is_empty());
-//         assert_eq!(snapshot.metadata.file_count, 0);
-//         assert_eq!(snapshot.metadata.directory_count, 0);
-//         assert!(snapshot.root().is_none());
-//     }
-
-//     #[test]
-//     fn snapshot_tracks_directories_and_sorts_entries_deterministically() {
-//         let temp = TempDir::new();
-//         fs::create_dir_all(temp.path().join("z-last/empty")).expect("create z-last/empty");
-//         fs::create_dir_all(temp.path().join("a-first")).expect("create a-first");
-//         fs::write(temp.path().join("z-last/file-b.txt"), b"second").expect("write file-b");
-//         fs::write(temp.path().join("a-first/file-a.txt"), b"first").expect("write file-a");
-
-//         let snapshot = build_snapshot(temp.path()).expect("snapshot should build");
-
-//         let directories: Vec<_> = snapshot.directories.iter().map(path_to_string).collect();
-//         let files: Vec<_> = snapshot
-//             .files
-//             .iter()
-//             .map(|entry| path_to_string(&entry.path))
-//             .collect();
-
-//         assert_eq!(directories, vec!["a-first", "z-last", "z-last/empty"]);
-//         assert_eq!(files, vec!["a-first/file-a.txt", "z-last/file-b.txt"]);
-//         assert_eq!(snapshot.metadata.directory_count, 3);
-//         assert_eq!(snapshot.metadata.file_count, 2);
-//         assert!(snapshot.root().is_some());
-//     }
-
-//     #[test]
-//     fn snapshot_root_changes_for_path_and_content_changes() {
-//         let renamed = TempDir::new();
-//         fs::write(renamed.path().join("alpha.txt"), b"same-content").expect("write alpha");
-
-//         let moved = TempDir::new();
-//         fs::write(moved.path().join("beta.txt"), b"same-content").expect("write beta");
-
-//         let changed = TempDir::new();
-//         fs::write(changed.path().join("alpha.txt"), b"different-content").expect("write changed");
-
-//         let renamed_snapshot = build_snapshot(renamed.path()).expect("build renamed snapshot");
-//         let moved_snapshot = build_snapshot(moved.path()).expect("build moved snapshot");
-//         let changed_snapshot = build_snapshot(changed.path()).expect("build changed snapshot");
-
-//         assert_ne!(renamed_snapshot.root(), moved_snapshot.root());
-//         assert_ne!(renamed_snapshot.root(), changed_snapshot.root());
-//         assert_eq!(renamed_snapshot.files[0].hash, moved_snapshot.files[0].hash);
-//     }
-
-//     fn path_to_string(path: &Path) -> String {
-//         path.to_string_lossy().into_owned()
-//     }
-
-//     struct TempDir {
-//         path: PathBuf,
-//     }
-
-//     impl TempDir {
-//         fn new() -> Self {
-//             let unique = format!(
-//                 "mtree-test-{}-{}",
-//                 std::process::id(),
-//                 UNIX_EPOCH
-//                     .elapsed()
-//                     .unwrap_or_else(|_| SystemTime::now()
-//                         .duration_since(UNIX_EPOCH)
-//                         .unwrap_or_default())
-//                     .as_nanos()
-//                     + NEXT_ID.fetch_add(1, Ordering::Relaxed) as u128
-//             );
-//             let path = std::env::temp_dir().join(unique);
-//             fs::create_dir_all(&path).expect("create temp dir");
-//             Self { path }
-//         }
-
-//         fn path(&self) -> &Path {
-//             &self.path
-//         }
-//     }
-
-//     impl Drop for TempDir {
-//         fn drop(&mut self) {
-//             let _ = fs::remove_dir_all(&self.path);
-//         }
-//     }
-// }
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -309,6 +208,67 @@ mod tests {
     };
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn builds_empty_snapshot_for_empty_directory() {
+        let temp = TempDir::new();
+
+        let snapshot = build_snapshot(temp.path()).expect("empty directory snapshot should build");
+
+        assert!(snapshot.directories.is_empty());
+        assert!(snapshot.files.is_empty());
+        assert_eq!(snapshot.metadata.file_count, 0);
+        assert_eq!(snapshot.metadata.directory_count, 0);
+        assert!(snapshot.root().is_none());
+    }
+
+    #[test]
+    fn snapshot_tracks_directories_and_sorts_entries_deterministically() {
+        let temp = TempDir::new();
+        fs::create_dir_all(temp.path().join("z-last/empty")).expect("create z-last/empty");
+        fs::create_dir_all(temp.path().join("a-first")).expect("create a-first");
+        fs::write(temp.path().join("z-last/file-b.txt"), b"second").expect("write file-b");
+        fs::write(temp.path().join("a-first/file-a.txt"), b"first").expect("write file-a");
+
+        let snapshot = build_snapshot(temp.path()).expect("snapshot should build");
+
+        let directories: Vec<String> = snapshot
+            .directories
+            .iter()
+            .map(|path| path_to_string(path))
+            .collect();
+        let files: Vec<String> = snapshot
+            .files
+            .iter()
+            .map(|entry| path_to_string(&entry.path))
+            .collect();
+
+        assert_eq!(directories, vec!["a-first", "z-last", "z-last/empty"]);
+        assert_eq!(files, vec!["a-first/file-a.txt", "z-last/file-b.txt"]);
+        assert_eq!(snapshot.metadata.directory_count, 3);
+        assert_eq!(snapshot.metadata.file_count, 2);
+        assert!(snapshot.root().is_some());
+    }
+
+    #[test]
+    fn snapshot_root_changes_for_path_and_content_changes() {
+        let renamed = TempDir::new();
+        fs::write(renamed.path().join("alpha.txt"), b"same-content").expect("write alpha");
+
+        let moved = TempDir::new();
+        fs::write(moved.path().join("beta.txt"), b"same-content").expect("write beta");
+
+        let changed = TempDir::new();
+        fs::write(changed.path().join("alpha.txt"), b"different-content").expect("write changed");
+
+        let renamed_snapshot = build_snapshot(renamed.path()).expect("build renamed snapshot");
+        let moved_snapshot = build_snapshot(moved.path()).expect("build moved snapshot");
+        let changed_snapshot = build_snapshot(changed.path()).expect("build changed snapshot");
+
+        assert_ne!(renamed_snapshot.root(), moved_snapshot.root());
+        assert_ne!(renamed_snapshot.root(), changed_snapshot.root());
+        assert_eq!(renamed_snapshot.files[0].hash, moved_snapshot.files[0].hash);
+    }
 
     #[test]
     fn snapshot_hashes_directory_subtrees_before_parent_level_pairing() {
@@ -353,6 +313,10 @@ mod tests {
             .expect("expected file entry")
     }
 
+    fn path_to_string(path: &Path) -> String {
+        path.to_string_lossy().into_owned()
+    }
+
     struct TempDir {
         path: PathBuf,
     }
@@ -364,11 +328,9 @@ mod tests {
                 std::process::id(),
                 UNIX_EPOCH
                     .elapsed()
-                    .unwrap_or_else(|_| {
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap_or_default()
-                    })
+                    .unwrap_or_else(|_| SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default())
                     .as_nanos()
                     + NEXT_ID.fetch_add(1, Ordering::Relaxed) as u128
             );
