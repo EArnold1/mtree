@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{
     fmt, fs, io,
     path::{Path, PathBuf},
@@ -12,6 +13,7 @@ pub enum BuildError {
     InvalidRoot(PathBuf),
     UnsupportedEntry(PathBuf),
     PathPrefix { path: PathBuf, root: PathBuf },
+    ParseError(serde_json::Error),
 }
 
 impl fmt::Display for BuildError {
@@ -32,6 +34,7 @@ impl fmt::Display for BuildError {
             Self::UnsupportedEntry(path) => {
                 write!(f, "unsupported directory entry type: {}", path.display())
             }
+            Self::ParseError(err) => write!(f, "failed to serialize snapshot to JSON: {err}"),
         }
     }
 }
@@ -41,7 +44,14 @@ impl std::error::Error for BuildError {
         match self {
             Self::Io(error) => Some(error),
             Self::InvalidRoot(_) | Self::UnsupportedEntry(_) | Self::PathPrefix { .. } => None,
+            Self::ParseError(err) => Some(err),
         }
+    }
+}
+
+impl From<serde_json::Error> for BuildError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::ParseError(error)
     }
 }
 
@@ -51,7 +61,7 @@ impl From<io::Error> for BuildError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotMetadata {
     pub root: PathBuf,
     pub generated_at_unix_seconds: u64,
@@ -59,28 +69,38 @@ pub struct SnapshotMetadata {
     pub directory_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEntry {
     pub path: PathBuf,
     pub hash: Vec<u8>,
     pub size: u64,
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct DirectorySnapshot {
     pub metadata: SnapshotMetadata,
     pub directories: Vec<PathBuf>,
     pub files: Vec<FileEntry>,
-    pub tree: MerkleTree,
+    pub tree: Option<NodeHash>, // hash of a Merkle tree root
 }
 
 impl DirectorySnapshot {
     pub fn root(&self) -> Option<Vec<u8>> {
-        self.tree.root()
+        self.tree.as_ref().map(NodeHash::to_vec)
     }
 
-    pub fn root_hash(&self) -> Option<NodeHash> {
-        self.tree.root_hash()
+    pub fn root_hash(&self) -> Option<&NodeHash> {
+        self.tree.as_ref()
+    }
+
+    pub fn save_snapshot(&self, path: impl AsRef<Path>) -> Result<(), BuildError> {
+        let snapshot = serde_json::to_string(&self)?;
+
+        fs::write(path, snapshot.as_bytes())?;
+
+        // TODO: add log message here ("saved to `file_path`")
+
+        Ok(())
     }
 }
 
@@ -96,12 +116,8 @@ pub fn build_snapshot(root: impl AsRef<Path>) -> Result<DirectorySnapshot, Build
     let mut files = Vec::new();
 
     let root_hash = walk_directory(&root, &root, &mut directories, &mut files)?;
-    let tree = match root_hash {
-        Some(hash) => MerkleTree::from_root(hash),
-        None => MerkleTree::new(&[]),
-    };
 
-    Ok(DirectorySnapshot {
+    let dir_snapshot = DirectorySnapshot {
         metadata: SnapshotMetadata {
             root,
             generated_at_unix_seconds: unix_timestamp(SystemTime::now()),
@@ -110,8 +126,10 @@ pub fn build_snapshot(root: impl AsRef<Path>) -> Result<DirectorySnapshot, Build
         },
         directories,
         files,
-        tree,
-    })
+        tree: root_hash,
+    };
+
+    Ok(dir_snapshot)
 }
 
 fn walk_directory(
@@ -180,6 +198,9 @@ fn directory_leaf_payload(path: &Path) -> Vec<u8> {
     payload.extend(normalize_path(path).as_bytes());
     payload
 }
+
+// TODO: use a better format to store directory node & file leaf
+// [type, file name size, file name, content hash]
 
 fn hash_directory_node(path: &Path, subtree_hash: Option<NodeHash>) -> NodeHash {
     let mut payload = directory_leaf_payload(path);
@@ -365,7 +386,7 @@ mod tests {
         let expected_root =
             combine_hashes(vec![hash_file_node(a), books_dir, hash_file_node(index)]);
 
-        assert_eq!(snapshot.root_hash(), Some(expected_root));
+        assert_eq!(snapshot.root_hash(), Some(&expected_root));
 
         let flat_leaf_refs = [
             file_leaf_payload(a),

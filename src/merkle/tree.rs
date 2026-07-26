@@ -1,8 +1,9 @@
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const HASH_SIZE: usize = 32;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeHash([u8; HASH_SIZE]);
 
 impl NodeHash {
@@ -21,7 +22,7 @@ impl AsRef<[u8]> for NodeHash {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MerkleTree {
     /// Stores the tree level by level.
     /// `levels[0]` contains the hashed leaves.
@@ -52,7 +53,7 @@ impl MerkleTree {
                 if chunk.len() == 2 {
                     next_level.push(Self::hash_pair(&chunk[0], &chunk[1]));
                 } else {
-                    next_level.push(Self::hash_pair(&chunk[0], &chunk[0]));
+                    next_level.push(Self::hash_pair(&chunk[0], &chunk[0])); // TODO: verify why this is done
                 }
             }
 
@@ -60,16 +61,7 @@ impl MerkleTree {
             current_level = next_level;
         }
 
-        // println!("MerkleTree levels: {:?}", &levels);
-
         MerkleTree { levels }
-    }
-
-    /// Creates a tree containing only a precomputed root hash.
-    pub fn from_root(root: NodeHash) -> Self {
-        MerkleTree {
-            levels: vec![vec![root]],
-        }
     }
 
     /// Returns the typed root hash of the tree.
