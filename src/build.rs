@@ -1,65 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    fmt, fs, io,
+    fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::{MerkleTree, NodeHash};
-
-#[derive(Debug)]
-pub enum BuildError {
-    Io(io::Error),
-    InvalidRoot(PathBuf),
-    UnsupportedEntry(PathBuf),
-    PathPrefix { path: PathBuf, root: PathBuf },
-    ParseError(serde_json::Error),
-}
-
-impl fmt::Display for BuildError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io(error) => write!(f, "I/O error while building snapshot: {error}"),
-            Self::InvalidRoot(path) => write!(
-                f,
-                "snapshot root must be an existing directory: {}",
-                path.display()
-            ),
-            Self::PathPrefix { path, root } => write!(
-                f,
-                "failed to derive a relative path for {} from root {}",
-                path.display(),
-                root.display()
-            ),
-            Self::UnsupportedEntry(path) => {
-                write!(f, "unsupported directory entry type: {}", path.display())
-            }
-            Self::ParseError(err) => write!(f, "failed to serialize snapshot to JSON: {err}"),
-        }
-    }
-}
-
-impl std::error::Error for BuildError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(error) => Some(error),
-            Self::InvalidRoot(_) | Self::UnsupportedEntry(_) | Self::PathPrefix { .. } => None,
-            Self::ParseError(err) => Some(err),
-        }
-    }
-}
-
-impl From<serde_json::Error> for BuildError {
-    fn from(error: serde_json::Error) -> Self {
-        Self::ParseError(error)
-    }
-}
-
-impl From<io::Error> for BuildError {
-    fn from(error: io::Error) -> Self {
-        Self::Io(error)
-    }
-}
+use crate::{MerkleTree, NodeHash, error::MtreeError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotMetadata {
@@ -93,7 +39,7 @@ impl DirectorySnapshot {
         self.tree.as_ref()
     }
 
-    pub fn save_snapshot(&self, path: impl AsRef<Path>) -> Result<(), BuildError> {
+    pub fn save_snapshot(&self, path: impl AsRef<Path>) -> Result<(), MtreeError> {
         let snapshot = serde_json::to_string(&self)?;
 
         fs::write(path, snapshot.as_bytes())?;
@@ -104,11 +50,11 @@ impl DirectorySnapshot {
     }
 }
 
-pub fn build_snapshot(root: impl AsRef<Path>) -> Result<DirectorySnapshot, BuildError> {
+pub fn build_snapshot(root: impl AsRef<Path>) -> Result<DirectorySnapshot, MtreeError> {
     let root = root.as_ref();
     let root_metadata = fs::metadata(root)?;
     if !root_metadata.is_dir() {
-        return Err(BuildError::InvalidRoot(root.to_path_buf()));
+        return Err(MtreeError::InvalidRoot(root.to_path_buf()));
     }
 
     let root = root.canonicalize()?;
@@ -137,7 +83,7 @@ fn walk_directory(
     current: &Path,
     directories: &mut Vec<PathBuf>,
     files: &mut Vec<FileEntry>,
-) -> Result<Option<NodeHash>, BuildError> {
+) -> Result<Option<NodeHash>, MtreeError> {
     let mut entries: Vec<_> = fs::read_dir(current)?.collect::<Result<_, _>>()?;
     entries.sort_by_key(|entry| entry.file_name());
 
@@ -149,7 +95,7 @@ fn walk_directory(
         let relative = relative_path(root, &path)?;
 
         if entry_type.is_symlink() {
-            return Err(BuildError::UnsupportedEntry(path));
+            return Err(MtreeError::UnsupportedEntry(path));
         }
 
         if entry_type.is_dir() {
@@ -174,7 +120,7 @@ fn walk_directory(
             continue;
         }
 
-        return Err(BuildError::UnsupportedEntry(path));
+        return Err(MtreeError::UnsupportedEntry(path));
     }
 
     if child_hashes.is_empty() {
@@ -184,10 +130,10 @@ fn walk_directory(
     }
 }
 
-fn relative_path(root: &Path, path: &Path) -> Result<PathBuf, BuildError> {
+fn relative_path(root: &Path, path: &Path) -> Result<PathBuf, MtreeError> {
     path.strip_prefix(root)
         .map(Path::to_path_buf)
-        .map_err(|_| BuildError::PathPrefix {
+        .map_err(|_| MtreeError::PathPrefix {
             path: path.to_path_buf(),
             root: root.to_path_buf(),
         })
