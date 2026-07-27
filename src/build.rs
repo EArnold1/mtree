@@ -5,7 +5,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::{MerkleTree, NodeHash, error::MtreeError};
+use crate::{
+    MerkleTree, NodeHash,
+    error::MtreeError,
+    hash::{HashAlgorithm, Sha256Hasher},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotMetadata {
@@ -117,7 +121,7 @@ fn walk_directory(
             let metadata = entry.metadata()?;
             let file = FileEntry {
                 path: relative,
-                hash: MerkleTree::hash_bytes(&contents).to_vec(),
+                hash: Sha256Hasher::hash_data(&contents).to_vec(),
                 size: metadata.len(),
             };
             let file_hash = hash_file_node(&file);
@@ -160,7 +164,7 @@ fn hash_directory_node(path: &Path, subtree_hash: Option<NodeHash>) -> NodeHash 
     if let Some(hash) = subtree_hash {
         payload.extend(hash.as_bytes());
     }
-    MerkleTree::hash_bytes(&payload)
+    Sha256Hasher::hash_data(&payload)
 }
 
 fn file_leaf_payload(file: &FileEntry) -> Vec<u8> {
@@ -172,7 +176,7 @@ fn file_leaf_payload(file: &FileEntry) -> Vec<u8> {
 }
 
 fn hash_file_node(file: &FileEntry) -> NodeHash {
-    MerkleTree::hash_bytes(&file_leaf_payload(file))
+    Sha256Hasher::hash_data(&file_leaf_payload(file))
 }
 
 fn combine_hashes(hashes: Vec<NodeHash>) -> NodeHash {
