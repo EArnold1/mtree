@@ -8,7 +8,10 @@ use std::{
 use crate::{
     MerkleTree, NodeHash,
     error::MtreeError,
-    hash::{HashAlgorithm, Sha256Hasher},
+    hash::{
+        HashAlgorithm, Sha256Hasher,
+        payload::{Payload, PayloadType},
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,34 +152,24 @@ fn relative_path(root: &Path, path: &Path) -> Result<PathBuf, MtreeError> {
         })
 }
 
-fn directory_leaf_payload(path: &Path) -> Vec<u8> {
-    let mut payload = Vec::from(b"dir\0".as_slice());
-    payload.extend(normalize_path(path).as_bytes());
-    payload
-}
-
-// TODO: use a better format to store directory node & file leaf
-// [type, file name size, file name, content hash]
-
 fn hash_directory_node(path: &Path, subtree_hash: Option<NodeHash>) -> NodeHash {
-    let mut payload = directory_leaf_payload(path);
-    payload.push(0);
-    if let Some(hash) = subtree_hash {
-        payload.extend(hash.as_bytes());
-    }
+    let payload = Payload::new(
+        PayloadType::Directory,
+        &normalize_path(path),
+        subtree_hash.map(|h| h.to_vec()).as_deref(),
+    )
+    .to_bytes();
     Sha256Hasher::hash_data(&payload)
 }
 
-fn file_leaf_payload(file: &FileEntry) -> Vec<u8> {
-    let mut payload = Vec::from(b"file\0".as_slice());
-    payload.extend(normalize_path(&file.path).as_bytes());
-    payload.push(0);
-    payload.extend(&file.hash);
-    payload
-}
-
 fn hash_file_node(file: &FileEntry) -> NodeHash {
-    Sha256Hasher::hash_data(&file_leaf_payload(file))
+    let payload = Payload::new(
+        PayloadType::File,
+        &normalize_path(&file.path),
+        Some(&file.hash),
+    )
+    .to_bytes();
+    Sha256Hasher::hash_data(&payload)
 }
 
 fn combine_hashes(hashes: Vec<NodeHash>) -> NodeHash {
@@ -201,12 +194,12 @@ fn unix_timestamp(time: SystemTime) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        FileEntry, build_snapshot, combine_hashes, file_leaf_payload, hash_directory_node,
-        hash_file_node,
+        FileEntry, PathBuf, Payload, PayloadType, build_snapshot, combine_hashes,
+        hash_directory_node, hash_file_node, normalize_path,
     };
     use std::{
         fs,
-        path::{Path, PathBuf},
+        path::Path,
         sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -319,6 +312,15 @@ mod tests {
 
     fn path_to_string(path: &Path) -> String {
         path.to_string_lossy().into_owned()
+    }
+
+    fn file_leaf_payload(file: &FileEntry) -> Vec<u8> {
+        Payload::new(
+            PayloadType::File,
+            &normalize_path(&file.path),
+            Some(&file.hash),
+        )
+        .to_bytes()
     }
 
     struct TempDir {
