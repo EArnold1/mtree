@@ -1,18 +1,15 @@
-use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::SystemTime,
 };
 
-use crate::{
-    MerkleTree, NodeHash,
-    error::MtreeError,
-    hash::{
-        HashAlgorithm, Sha256Hasher,
-        payload::{Payload, PayloadType},
-    },
-};
+use serde::{Deserialize, Serialize};
+
+use crate::{NodeHash, date, error::MtreeError, snapshot::scanner::walk_directory};
+
+mod encoding;
+mod scanner;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotMetadata {
@@ -25,7 +22,7 @@ pub struct SnapshotMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEntry {
     pub path: PathBuf,
-    pub hash: Vec<u8>,
+    pub hash: NodeHash,
     pub size: u64,
 }
 
@@ -52,6 +49,7 @@ impl DirectorySnapshot {
 
         fs::write(path, snapshot.as_bytes())?;
 
+        // TODO: replace
         log::info!(
             "Saved snapshot to {} (files: {}, directories: {})",
             path.display(),
@@ -79,7 +77,7 @@ pub fn build_snapshot(root: impl AsRef<Path>) -> Result<DirectorySnapshot, Mtree
     let dir_snapshot = DirectorySnapshot {
         metadata: SnapshotMetadata {
             root,
-            generated_at_unix_seconds: unix_timestamp(SystemTime::now()),
+            generated_at_unix_seconds: date::unix_timestamp(SystemTime::now()),
             file_count: files.len(),
             directory_count: directories.len(),
         },
@@ -91,112 +89,19 @@ pub fn build_snapshot(root: impl AsRef<Path>) -> Result<DirectorySnapshot, Mtree
     Ok(dir_snapshot)
 }
 
-fn walk_directory(
-    root: &Path,
-    current: &Path,
-    directories: &mut Vec<PathBuf>,
-    files: &mut Vec<FileEntry>,
-) -> Result<Option<NodeHash>, MtreeError> {
-    let mut entries: Vec<_> = fs::read_dir(current)?.collect::<Result<_, _>>()?;
-    entries.sort_by_key(|entry| entry.file_name());
-
-    let mut child_hashes = Vec::new();
-
-    for entry in entries {
-        let path = entry.path();
-        let entry_type = entry.file_type()?;
-        let relative = relative_path(root, &path)?;
-
-        if entry_type.is_symlink() {
-            return Err(MtreeError::UnsupportedEntry(path));
-        }
-
-        if entry_type.is_dir() {
-            directories.push(relative.clone());
-            let subtree_hash = walk_directory(root, &path, directories, files)?;
-            let directory_hash = hash_directory_node(&relative, subtree_hash);
-            child_hashes.push(directory_hash);
-            continue;
-        }
-
-        if entry_type.is_file() {
-            let contents = fs::read(&path)?; // TODO: read in chunks
-            let metadata = entry.metadata()?;
-            let file = FileEntry {
-                path: relative,
-                hash: Sha256Hasher::hash_data(&contents).to_vec(),
-                size: metadata.len(),
-            };
-            let file_hash = hash_file_node(&file);
-            files.push(file);
-            child_hashes.push(file_hash);
-            continue;
-        }
-
-        return Err(MtreeError::UnsupportedEntry(path));
-    }
-
-    if child_hashes.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(combine_hashes(child_hashes)))
-    }
-}
-
-fn relative_path(root: &Path, path: &Path) -> Result<PathBuf, MtreeError> {
-    path.strip_prefix(root)
-        .map(Path::to_path_buf)
-        .map_err(|_| MtreeError::PathPrefix {
-            path: path.to_path_buf(),
-            root: root.to_path_buf(),
-        })
-}
-
-fn hash_directory_node(path: &Path, subtree_hash: Option<NodeHash>) -> NodeHash {
-    let payload = Payload::new(
-        PayloadType::Directory,
-        &normalize_path(path),
-        subtree_hash.map(|h| h.to_vec()).as_deref(),
-    )
-    .to_bytes();
-    Sha256Hasher::hash_data(&payload)
-}
-
-fn hash_file_node(file: &FileEntry) -> NodeHash {
-    let payload = Payload::new(
-        PayloadType::File,
-        &normalize_path(&file.path),
-        Some(&file.hash),
-    )
-    .to_bytes();
-    Sha256Hasher::hash_data(&payload)
-}
-
-fn combine_hashes(hashes: Vec<NodeHash>) -> NodeHash {
-    MerkleTree::from_hashed_leaves(hashes)
-        .root_hash()
-        .expect("non-empty child hash list should always produce a Merkle root")
-}
-
-fn normalize_path(path: &Path) -> String {
-    path.components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-fn unix_timestamp(time: SystemTime) -> u64 {
-    time.duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        FileEntry, PathBuf, Payload, PayloadType, build_snapshot, combine_hashes,
-        hash_directory_node, hash_file_node, normalize_path,
+    use crate::{
+        MerkleTree,
+        hash::payload::{Payload, PayloadType},
+        utils::file::normalize_path,
     };
+
+    use super::{
+        FileEntry, NodeHash, PathBuf, build_snapshot,
+        encoding::{hash_directory_node, hash_file_node},
+    };
+
     use std::{
         fs,
         path::Path,
@@ -303,6 +208,12 @@ mod tests {
         assert_ne!(snapshot.root(), flat_root);
     }
 
+    fn combine_hashes(hashes: Vec<NodeHash>) -> NodeHash {
+        MerkleTree::from_hashed_leaves(hashes)
+            .root_hash()
+            .expect("non-empty child hash list should always produce a Merkle root")
+    }
+
     fn find_file<'a>(files: &'a [FileEntry], expected: &str) -> &'a FileEntry {
         files
             .iter()
@@ -318,7 +229,7 @@ mod tests {
         Payload::new(
             PayloadType::File,
             &normalize_path(&file.path),
-            Some(&file.hash),
+            Some(&file.hash.to_vec()),
         )
         .to_bytes()
     }

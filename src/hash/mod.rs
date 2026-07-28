@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-mod sha256;
 pub mod payload;
+mod sha256;
 
 pub use sha256::Sha256Hasher;
 
