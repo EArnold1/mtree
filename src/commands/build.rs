@@ -10,6 +10,8 @@ pub fn execute(dir: &Path, output: Option<&Path>) -> Result<(), MtreeError> {
     }
 
     let json = serde_json::to_string(&snapshot)?;
+
+    // println!() over info!() because info!() adds additional metadata to the output.
     println!("{json}");
     Ok(())
 }

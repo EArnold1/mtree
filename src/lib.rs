@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod error;
 pub mod hash;
+pub mod logger;
 pub mod merkle;
 pub mod snapshot;
 pub mod utils;

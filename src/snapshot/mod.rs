@@ -6,7 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{NodeHash, date, error::MtreeError, snapshot::scanner::walk_directory};
+use crate::{NodeHash, date, error::MtreeError, info, snapshot::scanner::walk_directory};
 
 mod encoding;
 mod scanner;
@@ -49,13 +49,7 @@ impl DirectorySnapshot {
 
         fs::write(path, snapshot.as_bytes())?;
 
-        // TODO: replace
-        log::info!(
-            "Saved snapshot to {} (files: {}, directories: {})",
-            path.display(),
-            self.metadata.file_count,
-            self.metadata.directory_count
-        );
+        info!("Saved snapshot to {} ", path.display());
 
         Ok(())
     }
