@@ -1,4 +1,4 @@
-use crate::hash::{HashAlgorithm, NodeHash, Sha256Hasher};
+use crate::hash::{NodeHash, hash_data, hash_pair};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,7 +12,7 @@ pub struct MerkleTree {
 impl MerkleTree {
     /// Builds a new Merkle Tree from a slice of byte slices.
     pub fn new(data: &[&[u8]]) -> Self {
-        let leaves: Vec<NodeHash> = data.iter().map(|&d| Sha256Hasher::hash_data(d)).collect();
+        let leaves: Vec<NodeHash> = data.iter().map(|&d| hash_data(d)).collect();
         Self::from_hashed_leaves(leaves)
     }
 
@@ -30,9 +30,9 @@ impl MerkleTree {
 
             for chunk in current_level.chunks(2) {
                 if chunk.len() == 2 {
-                    next_level.push(Sha256Hasher::hash_pair(&chunk[0], &chunk[1]));
+                    next_level.push(hash_pair(&chunk[0], &chunk[1]));
                 } else {
-                    next_level.push(Sha256Hasher::hash_pair(&chunk[0], &chunk[0])); // duplicate final leaf for odd-width level
+                    next_level.push(hash_pair(&chunk[0], &chunk[0])); // duplicate final leaf for odd-width level
                 }
             }
 
@@ -63,7 +63,7 @@ impl MerkleTree {
 #[cfg(test)]
 mod tests {
     use super::MerkleTree;
-    use crate::hash::{HashAlgorithm, Sha256Hasher};
+    use crate::hash::{hash_data, hash_pair};
 
     #[test]
     fn empty_tree_has_no_levels_and_no_root() {
@@ -78,7 +78,7 @@ mod tests {
     fn single_leaf_tree_root_matches_leaf_hash() {
         let leaf = b"alpha";
         let tree = MerkleTree::new(&[leaf.as_slice()]);
-        let expected = Sha256Hasher::hash_data(leaf);
+        let expected = hash_data(leaf);
 
         assert_eq!(tree.levels_len(), 1);
         assert_eq!(tree.root_hash(), Some(expected.clone()));
@@ -87,11 +87,11 @@ mod tests {
 
     #[test]
     fn even_leaf_count_hashes_adjacent_pairs() {
-        let a = Sha256Hasher::hash_data(b"a");
-        let b = Sha256Hasher::hash_data(b"b");
+        let a = hash_data(b"a");
+        let b = hash_data(b"b");
 
         let tree = MerkleTree::from_hashed_leaves(vec![a.clone(), b.clone()]);
-        let expected_root = Sha256Hasher::hash_pair(&a, &b);
+        let expected_root = hash_pair(&a, &b);
 
         assert_eq!(tree.levels_len(), 2);
         assert_eq!(tree.root_hash(), Some(expected_root));
@@ -99,15 +99,15 @@ mod tests {
 
     #[test]
     fn odd_leaf_count_duplicates_last_leaf_before_pairing() {
-        let a = Sha256Hasher::hash_data(b"a");
-        let b = Sha256Hasher::hash_data(b"b");
-        let c = Sha256Hasher::hash_data(b"c");
+        let a = hash_data(b"a");
+        let b = hash_data(b"b");
+        let c = hash_data(b"c");
 
         let tree = MerkleTree::from_hashed_leaves(vec![a.clone(), b.clone(), c.clone()]);
 
-        let left = Sha256Hasher::hash_pair(&a, &b);
-        let right = Sha256Hasher::hash_pair(&c, &c);
-        let expected_root = Sha256Hasher::hash_pair(&left, &right);
+        let left = hash_pair(&a, &b);
+        let right = hash_pair(&c, &c);
+        let expected_root = hash_pair(&left, &right);
 
         assert_eq!(tree.levels_len(), 3);
         assert_eq!(tree.root_hash(), Some(expected_root));
