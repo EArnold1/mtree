@@ -34,6 +34,12 @@ pub struct DirectorySnapshot {
     pub tree: Option<NodeHash>, // hash of a Merkle tree root
 }
 
+impl PartialEq for DirectorySnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.tree == other.tree
+    }
+}
+
 impl DirectorySnapshot {
     pub fn root(&self) -> Option<Vec<u8>> {
         self.tree.as_ref().map(NodeHash::to_vec)
@@ -52,6 +58,13 @@ impl DirectorySnapshot {
         info!("Saved snapshot to {} ", path.display());
 
         Ok(())
+    }
+
+    pub fn deserialize_snapshot(path: impl AsRef<Path>) -> Result<DirectorySnapshot, MtreeError> {
+        let path = path.as_ref();
+        let snapshot = fs::read_to_string(path)?;
+        let snapshot: DirectorySnapshot = serde_json::from_str(&snapshot)?;
+        Ok(snapshot)
     }
 }
 
