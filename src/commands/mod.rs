@@ -1,4 +1,5 @@
 mod build;
+mod diff;
 mod verify;
 
 use clap::{Parser, Subcommand};
@@ -30,8 +31,16 @@ enum Commands {
     Verify {
         /// Live directory.
         live_dir: PathBuf,
-        /// Optional path to write snapshot JSON. If omitted, writes to stdout.
-        snapshot_dir: PathBuf,
+        /// Path to the snapshot JSON file.
+        baseline_snapshot: PathBuf,
+    },
+    /// Compares two snapshots and reports file-level changes.
+    #[command(alias = "d")]
+    Diff {
+        /// Path to the baseline snapshot JSON file.
+        baseline_snapshot: PathBuf,
+        /// Path to the snapshot JSON file being compared with the baseline.
+        comparison_snapshot: PathBuf,
     },
 }
 
@@ -42,8 +51,12 @@ pub fn run() -> Result<(), MtreeError> {
         Commands::Build { dir, output } => build::execute(&dir, output.as_deref())?,
         Commands::Verify {
             live_dir,
-            snapshot_dir,
-        } => verify::execute(&live_dir, &snapshot_dir)?,
+            baseline_snapshot,
+        } => verify::execute(&live_dir, &baseline_snapshot)?,
+        Commands::Diff {
+            baseline_snapshot,
+            comparison_snapshot,
+        } => diff::execute(&baseline_snapshot, &comparison_snapshot)?,
     }
     Ok(())
 }
