@@ -1,9 +1,11 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt,
     path::{Path, PathBuf},
+    writeln,
 };
 
-use crate::{DirectorySnapshot, FileEntry, build_snapshot, error::MtreeError, info};
+use crate::{DirectorySnapshot, FileEntry, build_snapshot, error::MtreeError};
 
 #[derive(Default)]
 struct FileChanges {
@@ -12,18 +14,40 @@ struct FileChanges {
     added: Vec<PathBuf>,
 }
 
-impl FileChanges {
-    fn log(&self) {
-        for path in &self.modified {
-            info!("Modified file: {}", path.display());
-        }
-        for path in &self.deleted {
-            info!("Deleted file: {}", path.display());
-        }
-        for path in &self.added {
-            info!("Added file: {}", path.display());
-        }
+impl fmt::Display for FileChanges {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(formatter, "Changes detected")?;
+
+        write_change_section(formatter, "Modified", 'M', &self.modified)?;
+        write_change_section(formatter, "Added", 'A', &self.added)?;
+        write_change_section(formatter, "Deleted", 'D', &self.deleted)?;
+
+        writeln!(
+            formatter,
+            "\nSummary: {} modified, {} added, {} deleted",
+            self.modified.len(),
+            self.added.len(),
+            self.deleted.len(),
+        )
     }
+}
+
+fn write_change_section(
+    formatter: &mut fmt::Formatter<'_>,
+    title: &str,
+    status: char,
+    paths: &[PathBuf],
+) -> fmt::Result {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    writeln!(formatter, "\n{title} ({})", paths.len())?;
+    for path in paths {
+        writeln!(formatter, "  {status}  {}", path.display())?;
+    }
+
+    Ok(())
 }
 
 pub fn execute(live_dir: &Path, snapshot_path: &Path) -> Result<(), MtreeError> {
@@ -32,10 +56,10 @@ pub fn execute(live_dir: &Path, snapshot_path: &Path) -> Result<(), MtreeError> 
     let live_snapshot = build_snapshot(live_dir)?;
 
     if live_snapshot != snapshot {
-        info!("Snapshot has changed");
-        classify_file_changes(&live_snapshot.files, &snapshot.files).log();
+        let changes = classify_file_changes(&live_snapshot.files, &snapshot.files);
+        print!("{changes}");
     } else {
-        info!("Snapshot is unchanged");
+        println!("No changes detected");
     }
 
     Ok(())
@@ -107,6 +131,28 @@ mod tests {
         assert!(changes.modified.is_empty());
         assert_paths(&changes.deleted, &["before.txt"]);
         assert_paths(&changes.added, &["after.txt"]);
+    }
+
+    #[test]
+    fn formats_changes_as_a_grouped_cli_report() {
+        let changes = classify_file_changes(
+            &[file("added.txt", 1), file("modified.txt", 2)],
+            &[file("deleted.txt", 3), file("modified.txt", 4)],
+        );
+
+        assert_eq!(
+            changes.to_string(),
+            concat!(
+                "verify: changes detected\n\n",
+                "Modified (1)\n",
+                "  M  modified.txt\n\n",
+                "Added (1)\n",
+                "  A  added.txt\n\n",
+                "Deleted (1)\n",
+                "  D  deleted.txt\n\n",
+                "Summary: 1 modified, 1 added, 1 deleted\n",
+            ),
+        );
     }
 
     fn file(path: &str, hash_byte: u8) -> FileEntry {
