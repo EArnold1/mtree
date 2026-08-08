@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 use crate::{
     MerkleTree, NodeHash,
@@ -17,7 +14,6 @@ use crate::{
 pub fn walk_directory(
     root: &Path,
     current: &Path,
-    directories: &mut Vec<PathBuf>,
     files: &mut Vec<FileEntry>,
 ) -> Result<Option<NodeHash>, MtreeError> {
     let mut entries: Vec<_> = fs::read_dir(current)?.collect::<Result<_, _>>()?;
@@ -36,15 +32,11 @@ pub fn walk_directory(
 
         if entry_type.is_dir() {
             // Scan first so directories that contain only empty directories are skipped too.
-            // Keeping child entries local prevents a skipped subtree from being recorded.
-            let mut child_directories = Vec::new();
+            // Keeping files local prevents a skipped subtree from being recorded.
             let mut child_files = Vec::new();
-            let subtree_hash =
-                walk_directory(root, &path, &mut child_directories, &mut child_files)?;
+            let subtree_hash = walk_directory(root, &path, &mut child_files)?;
 
             if let Some(subtree_hash) = subtree_hash {
-                directories.push(relative.clone());
-                directories.extend(child_directories);
                 files.extend(child_files);
                 child_hashes.push(hash_directory_node(&relative, subtree_hash));
             }
@@ -56,7 +48,7 @@ pub fn walk_directory(
             let metadata = entry.metadata()?;
             let file = FileEntry {
                 path: relative,
-                hash: hash_data(&contents),
+                content_hash: hash_data(&contents),
                 size: metadata.len(),
             };
             let file_hash = hash_file_node(&file);

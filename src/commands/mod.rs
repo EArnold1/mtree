@@ -28,8 +28,8 @@ enum Commands {
     /// Compares a directory with provided snapshot
     #[command(alias = "v")]
     Verify {
-        /// Directory to snapshot.
-        dir: PathBuf,
+        /// Live directory.
+        live_dir: PathBuf,
         /// Optional path to write snapshot JSON. If omitted, writes to stdout.
         snapshot_dir: PathBuf,
     },
@@ -40,7 +40,10 @@ pub fn run() -> Result<(), MtreeError> {
 
     match cli.command {
         Commands::Build { dir, output } => build::execute(&dir, output.as_deref())?,
-        Commands::Verify { dir, snapshot_dir } => verify::execute(&dir, &snapshot_dir)?,
+        Commands::Verify {
+            live_dir,
+            snapshot_dir,
+        } => verify::execute(&live_dir, &snapshot_dir)?,
     }
     Ok(())
 }

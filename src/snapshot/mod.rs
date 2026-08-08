@@ -16,20 +16,18 @@ pub struct SnapshotMetadata {
     pub root: PathBuf,
     pub generated_at_unix_seconds: u64,
     pub file_count: usize,
-    pub directory_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEntry {
     pub path: PathBuf,
-    pub hash: NodeHash,
+    pub content_hash: NodeHash,
     pub size: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DirectorySnapshot {
     pub metadata: SnapshotMetadata,
-    pub directories: Vec<PathBuf>,
     pub files: Vec<FileEntry>,
     pub tree: Option<NodeHash>, // hash of a Merkle tree root
 }
@@ -76,19 +74,16 @@ pub fn build_snapshot(root: impl AsRef<Path>) -> Result<DirectorySnapshot, Mtree
     }
 
     let root = root.canonicalize()?;
-    let mut directories = Vec::new();
     let mut files = Vec::new();
 
-    let root_hash = walk_directory(&root, &root, &mut directories, &mut files)?;
+    let root_hash = walk_directory(&root, &root, &mut files)?;
 
     let dir_snapshot = DirectorySnapshot {
         metadata: SnapshotMetadata {
             root,
             generated_at_unix_seconds: date::unix_timestamp(SystemTime::now()),
             file_count: files.len(),
-            directory_count: directories.len(),
         },
-        directories,
         files,
         tree: root_hash,
     };
@@ -124,15 +119,13 @@ mod tests {
 
         let snapshot = build_snapshot(temp.path()).expect("empty directory snapshot should build");
 
-        assert!(snapshot.directories.is_empty());
         assert!(snapshot.files.is_empty());
         assert_eq!(snapshot.metadata.file_count, 0);
-        assert_eq!(snapshot.metadata.directory_count, 0);
         assert!(snapshot.root().is_none());
     }
 
     #[test]
-    fn snapshot_skips_empty_directories_and_sorts_entries_deterministically() {
+    fn snapshot_skips_empty_directories_and_sorts_files_deterministically() {
         let temp = TempDir::new();
         fs::create_dir_all(temp.path().join("z-last/empty")).expect("create z-last/empty");
         fs::create_dir_all(temp.path().join("empty-branch/nested"))
@@ -143,20 +136,13 @@ mod tests {
 
         let snapshot = build_snapshot(temp.path()).expect("snapshot should build");
 
-        let directories: Vec<String> = snapshot
-            .directories
-            .iter()
-            .map(|path| path_to_string(path))
-            .collect();
         let files: Vec<String> = snapshot
             .files
             .iter()
             .map(|entry| path_to_string(&entry.path))
             .collect();
 
-        assert_eq!(directories, vec!["a-first", "z-last"]);
         assert_eq!(files, vec!["a-first/file-a.txt", "z-last/file-b.txt"]);
-        assert_eq!(snapshot.metadata.directory_count, 2);
         assert_eq!(snapshot.metadata.file_count, 2);
         assert!(snapshot.root().is_some());
     }
@@ -178,7 +164,10 @@ mod tests {
 
         assert_ne!(renamed_snapshot.root(), moved_snapshot.root());
         assert_ne!(renamed_snapshot.root(), changed_snapshot.root());
-        assert_eq!(renamed_snapshot.files[0].hash, moved_snapshot.files[0].hash);
+        assert_eq!(
+            renamed_snapshot.files[0].content_hash,
+            moved_snapshot.files[0].content_hash
+        );
     }
 
     #[test]
@@ -238,7 +227,7 @@ mod tests {
         Payload::new(
             PayloadType::File,
             &normalize_path(&file.path),
-            &file.hash.to_vec(),
+            &file.content_hash.to_vec(),
         )
         .to_bytes()
     }

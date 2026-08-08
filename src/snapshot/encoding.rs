@@ -22,7 +22,7 @@ pub fn hash_file_node(file: &FileEntry) -> NodeHash {
     let payload = Payload::new(
         PayloadType::File,
         &normalize_path(&file.path),
-        &file.hash.to_vec(),
+        &file.content_hash.to_vec(),
     )
     .to_bytes();
     hash_data(&payload)
