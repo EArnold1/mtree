@@ -35,10 +35,19 @@ pub fn walk_directory(
         }
 
         if entry_type.is_dir() {
-            directories.push(relative.clone());
-            let subtree_hash = walk_directory(root, &path, directories, files)?;
-            let directory_hash = hash_directory_node(&relative, subtree_hash);
-            child_hashes.push(directory_hash);
+            // Scan first so directories that contain only empty directories are skipped too.
+            // Keeping child entries local prevents a skipped subtree from being recorded.
+            let mut child_directories = Vec::new();
+            let mut child_files = Vec::new();
+            let subtree_hash =
+                walk_directory(root, &path, &mut child_directories, &mut child_files)?;
+
+            if let Some(subtree_hash) = subtree_hash {
+                directories.push(relative.clone());
+                directories.extend(child_directories);
+                files.extend(child_files);
+                child_hashes.push(hash_directory_node(&relative, subtree_hash));
+            }
             continue;
         }
 

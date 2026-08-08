@@ -132,9 +132,11 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_tracks_directories_and_sorts_entries_deterministically() {
+    fn snapshot_skips_empty_directories_and_sorts_entries_deterministically() {
         let temp = TempDir::new();
         fs::create_dir_all(temp.path().join("z-last/empty")).expect("create z-last/empty");
+        fs::create_dir_all(temp.path().join("empty-branch/nested"))
+            .expect("create empty-branch/nested");
         fs::create_dir_all(temp.path().join("a-first")).expect("create a-first");
         fs::write(temp.path().join("z-last/file-b.txt"), b"second").expect("write file-b");
         fs::write(temp.path().join("a-first/file-a.txt"), b"first").expect("write file-a");
@@ -152,9 +154,9 @@ mod tests {
             .map(|entry| path_to_string(&entry.path))
             .collect();
 
-        assert_eq!(directories, vec!["a-first", "z-last", "z-last/empty"]);
+        assert_eq!(directories, vec!["a-first", "z-last"]);
         assert_eq!(files, vec!["a-first/file-a.txt", "z-last/file-b.txt"]);
-        assert_eq!(snapshot.metadata.directory_count, 3);
+        assert_eq!(snapshot.metadata.directory_count, 2);
         assert_eq!(snapshot.metadata.file_count, 2);
         assert!(snapshot.root().is_some());
     }
@@ -197,7 +199,7 @@ mod tests {
 
         let books_children =
             combine_hashes(vec![hash_file_node(books_file), hash_file_node(books_text)]);
-        let books_dir = hash_directory_node(Path::new("books"), Some(books_children));
+        let books_dir = hash_directory_node(Path::new("books"), books_children);
         let expected_root =
             combine_hashes(vec![hash_file_node(a), books_dir, hash_file_node(index)]);
 
@@ -236,7 +238,7 @@ mod tests {
         Payload::new(
             PayloadType::File,
             &normalize_path(&file.path),
-            Some(&file.hash.to_vec()),
+            &file.hash.to_vec(),
         )
         .to_bytes()
     }
